@@ -1,0 +1,101 @@
+<div class="search-widget-container">
+  <div class="search-header">
+    <h2>Vision Vogue Search</h2>
+    <p class="partner-info" *ngIf="partnerName">Partner: {{ partnerName }}</p>
+  </div>
+
+  <div class="search-box">
+    <div class="p-inputgroup">
+      <input
+        type="text"
+        pInputText
+        [(ngModel)]="searchQuery"
+        (keypress)="onKeyPress($event)"
+        placeholder="Search for items (e.g., 'red hats', 'blue sneakers'...)"
+        class="search-input"
+      />
+      <button
+        pButton
+        type="button"
+        label="Search"
+        icon="pi pi-search"
+        (click)="onSearch()"
+        [disabled]="loading || !searchQuery.trim()"
+        class="search-button"
+      ></button>
+    </div>
+  </div>
+
+  <div class="results-section" *ngIf="loading || results.length > 0 || error || (searchPerformed && !loading && results.length === 0)">
+    <div class="spinner-container" *ngIf="loading">
+      <p-progressSpinner></p-progressSpinner>
+      <p>Searching...</p>
+    </div>
+
+    <div class="error-message" *ngIf="error">
+      <i class="pi pi-exclamation-triangle"></i>
+      {{ error }}
+    </div>
+
+    <div class="results-container" *ngIf="!loading && results.length > 0">
+      <h3>Found {{ results.length }} result(s)</h3>
+
+      <p-carousel
+        [value]="results"
+        [numVisible]="3"
+        [numScroll]="1"
+        [circular]="true"
+        [responsiveOptions]="responsiveOptions"
+        [autoplayInterval]="0"
+      >
+        <ng-template let-result pTemplate="item">
+          <div class="result-item">
+            <p-card>
+              <ng-template pTemplate="header">
+                <img
+                  *ngIf="!result.imageError"
+                  [src]="getImageUrl(result.filename)"
+                  [alt]="result.filename"
+                  class="result-image"
+                  (error)="handleImageError(result)"
+                />
+                <div *ngIf="result.imageError" class="image-error">
+                  <i class="pi pi-image"></i>
+                  <p>Image not available</p>
+                </div>
+              </ng-template>
+              <ng-template pTemplate="title">
+                {{ result.topCategoryLabel }}
+              </ng-template>
+              <ng-template pTemplate="subtitle">
+                {{ result.filename }}
+              </ng-template>
+              <ng-template pTemplate="content">
+                <div class="scores">
+                  <div class="score-item">
+                    <span class="score-label">Similarity:</span>
+                    <span class="score-value">{{ (result.similarity * 100).toFixed(1) }}%</span>
+                  </div>
+                  <div class="score-item">
+                    <span class="score-label">Confidence:</span>
+                    <span class="score-value">{{ (result.topCategoryConfidence * 100).toFixed(1) }}%</span>
+                  </div>
+                  <div class="score-item">
+                    <span class="score-label">Combined Score:</span>
+                    <span class="score-value highlight">{{ (result.combinedScore * 100).toFixed(1) }}%</span>
+                  </div>
+                </div>
+              </ng-template>
+            </p-card>
+          </div>
+        </ng-template>
+      </p-carousel>
+    </div>
+
+    <div class="no-results" *ngIf="!loading && results.length === 0 && searchPerformed && !error">
+      <i class="pi pi-info-circle"></i>
+      <p>No items found for "{{ searchQuery }}". Try a different search term.</p>
+    </div>
+  </div>
+</div>
+

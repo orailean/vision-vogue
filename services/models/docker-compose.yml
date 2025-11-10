@@ -1,0 +1,12 @@
+version: "3.8"
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    # Uncomment to persist HF cache locally (optional)
+    # volumes:
+    #   - ./data/hf_cache:/root/.cache/huggingface
+

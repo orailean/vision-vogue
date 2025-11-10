@@ -1,0 +1,35 @@
+# Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Env
+.env
+
+# Editor swaps
+*.swp
+*.swo
+
+# Maven Wrapper (optional binary)
+/.mvn/wrapper/maven-wrapper.jar
+
+data/
+
+scripts/*/*
+!scripts/bash/fetch-images.sh
+/src/main/resources/static/widget/

@@ -1,0 +1,51 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment and local config
+.env
+.env.*
+.envrc
+.python-version
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Test and type caches
+.pytest_cache/
+.mypy_cache/
+.pytype/
+.ruff_cache/
+.coverage
+coverage.xml
+.hypothesis/
+.pyre/
+.dmypy.json
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Local data and caches
+data/
+.cache/
+huggingface/
+.cache/huggingface/
+
+# Docker overrides
+docker-compose.override.yml

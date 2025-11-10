@@ -1,0 +1,55 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15
+    container_name: vision_vogue_ai_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: vision_vogue
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d vision_vogue"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  models-api:
+    build: ./services/models
+    container_name: vision_vogue_models_api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    # Uncomment to persist HF cache across builds/runs
+    # volumes:
+    #   - ./data/hf_cache:/root/.cache/huggingface
+
+  taxonomy:
+    build: ./services/taxonomy
+    container_name: vision_vogue_taxonomy
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      models-api:
+        condition: service_started
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/vision_vogue
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgres
+      APP_ANALYZE_URL: http://models-api:8000/analyze
+      EMBEDDING_API_URL: http://models-api:8000/embed
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./services/taxonomy/data:/app/data
+
+volumes:
+  db_data:

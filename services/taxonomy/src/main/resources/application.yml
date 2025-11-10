@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: vision-vogue-analyzer
+  datasource:
+    url: jdbc:postgresql://localhost:5432/vision_vogue
+    username: postgres
+    password: postgres
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+    show-sql: false
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    clean-disabled: false
+
+server:
+  port: 8080
+
+app:
+  analyze-url: http://127.0.0.1:8000/analyze
+  income-dir: data/income
+  processed-dir: data/processed
+  failed-dir: data/failed
+  top-k-category: 3
+  top-per-attribute: 1
+  n-colors: 2
+
+embedding:
+  api:
+    url: http://127.0.0.1:8000/embed
+
+semantic:
+  search:
+    min-similarity-threshold: 0.35
+

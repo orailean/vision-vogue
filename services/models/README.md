@@ -35,6 +35,18 @@ docker compose up --build
 
 Swagger UI: http://127.0.0.1:8000/docs
 
+## Publish to Docker Hub
+
+Build and push with your own repository name:
+
+```
+docker login
+docker build -t <username>/vision-vogue-models:latest .
+docker push <username>/vision-vogue-models:latest
+```
+
+Replace `<username>` (and add a custom tag if desired) before pushing.
+
 ## Notes
 
 - The first request triggers model downloads from Hugging Face; subsequent runs are cached.

@@ -565,6 +565,15 @@ docker build -t vision-vogue-analyzer .
 docker compose up -d
 ```
 
+**Publish to Docker Hub**:
+```bash
+docker login
+docker build -t <username>/vision-vogue-analyzer:latest .
+docker push <username>/vision-vogue-analyzer:latest
+```
+
+Replace `<username>` (and optionally the tag) with your Docker Hub repository before pushing.
+
 ---
 
 ## 📊 Semantic Search Architecture

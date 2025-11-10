@@ -20,6 +20,7 @@ Services:
 - Models API (FastAPI): http://localhost:8000/docs
 - Taxonomy API (Spring Boot): http://localhost:8080/swagger-ui.html
 - Widget: http://localhost:8080/widget/{partnerId}
+- File Drop SFTP: sftp/scp on localhost:2222 (user `uploader`/`uploader`)
 - Postgres: localhost:5432 (db: `vision_vogue`, user: `postgres`, pass: `postgres`)
 
 The taxonomy app is configured to call the models API via internal Docker DNS name `models-api`.
@@ -47,6 +48,18 @@ Common overrides:
 - `SPRING_DATASOURCE_URL`: JDBC URL for Postgres (default: `jdbc:postgresql://db:5432/vision_vogue`)
 - `APP_ANALYZE_URL`: URL for analyzer endpoint (default: `http://models-api:8000/analyze`)
 - `EMBEDDING_API_URL`: URL for embeddings endpoint (default: `http://models-api:8000/embed`)
+
+### Uploading Images
+
+Use the baked-in SSH/SFTP service to drop files into the taxonomy watcher:
+
+```bash
+scp -P 2222 my-image.jpg uploader@localhost:incoming/
+```
+
+The command above maps directly to `data/incoming` inside the taxonomy container, so partner folders (for example `incoming/123/`) can be created locally or through the upload service.
+
+To change credentials, set `USER_NAME`, `USER_PASSWORD`, and related variables under the `file-drop` service in `docker-compose.yml`.
 
 ## Development Notes
 

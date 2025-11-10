@@ -47,7 +47,28 @@ services:
       EMBEDDING_API_URL: http://models-api:8000/embed
     ports:
       - "8080:8080"
+    volumes:
+      - ./data:/app/data
+
+  file-drop:
+    image: lscr.io/linuxserver/openssh-server:latest
+    container_name: vision_vogue_file_drop
+    restart: unless-stopped
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: UTC
+      USER_NAME: uploader
+      USER_PASSWORD: uploader
+      PASSWORD_ACCESS: "true"
+      SUDO_ACCESS: "false"
+    volumes:
+      - ssh_config:/config
+      - ./data/incoming:/config/incoming
+    ports:
+      - "2222:2222"
 
 volumes:
   db_data:
   hf_cache:
+  ssh_config:

@@ -45,7 +45,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: postgres
       APP_ANALYZE_URL: http://models-api:8000/analyze
       EMBEDDING_API_URL: http://models-api:8000/embed
-      SEMANTIC_SEARCH_MIN_SIMILARITY_THRESHOLD: 0.45
+      SEMANTIC_SEARCH_MIN_SIMILARITY_THRESHOLD: 0.35
     ports:
       - "8080:8080"
     volumes:

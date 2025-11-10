@@ -1,2 +1,22 @@
-.idea
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Env
+.env
+
+# Editor swaps
+*.swp
+*.swo
+
+data
+
 hf_cache

@@ -7,7 +7,7 @@ A Spring Boot application for AI-powered fashion image analysis and semantic sea
 - 📸 **Image Analysis**: Automatic processing of fashion images using external AI API
 - 🔍 **Semantic Search**: Natural language search powered by sentence transformers
 - 🎨 **Interactive Widget**: Angular 20 + PrimeNG carousel for visual search results
-- 👔 **Multi-Partner**: Support for multiple partner organizations
+- 👔 **Multi-Partner**: Support for multiple partner organizations with automatic directory structure creation
 - 🗄️ **PostgreSQL Storage**: Structured data with JSONB for flexible schema
 - 📊 **REST API**: Full REST endpoints with Swagger UI documentation
 - 🐳 **Docker Support**: Easy PostgreSQL setup with Docker Compose
@@ -375,9 +375,12 @@ curl -X POST http://localhost:8080/api/partners \
 
 2. Copy the returned `id` (UUID)
 
-3. Create folder: `data/income/{partnerId}/`
+3. **Partner directories are automatically created** in:
+   - `data/income/{partnerId}/` - Drop incoming images here
+   - `data/processed/{partnerId}/` - Successfully processed images
+   - `data/failed/{partnerId}/` - Failed processing images
 
-4. Drop images into the folder
+4. Drop images into the `data/income/{partnerId}/` folder
 
 ---
 

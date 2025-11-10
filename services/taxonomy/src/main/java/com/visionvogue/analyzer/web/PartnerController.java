@@ -2,6 +2,7 @@ package com.visionvogue.analyzer.web;
 
 import com.visionvogue.analyzer.model.Partner;
 import com.visionvogue.analyzer.repo.PartnerRepository;
+import com.visionvogue.analyzer.service.PartnerService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.ResponseEntity;
@@ -14,16 +15,16 @@ import java.util.UUID;
 @RequestMapping("/api/partners")
 public class PartnerController {
     private final PartnerRepository partnerRepository;
+    private final PartnerService partnerService;
 
-    public PartnerController(PartnerRepository partnerRepository) {
+    public PartnerController(PartnerRepository partnerRepository, PartnerService partnerService) {
         this.partnerRepository = partnerRepository;
+        this.partnerService = partnerService;
     }
 
     @PostMapping
     public ResponseEntity<Partner> create(@Valid @RequestBody CreatePartnerRequest request) {
-        Partner p = new Partner();
-        p.setName(request.name());
-        Partner saved = partnerRepository.save(p);
+        Partner saved = partnerService.createPartner(request.name());
         return ResponseEntity.created(URI.create("/api/partners/" + saved.getId())).body(saved);
     }
 

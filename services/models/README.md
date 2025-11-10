@@ -1,8 +1,6 @@
 # Vision Vogue Models API
 
-FastAPI server exposing two endpoints:
-- `/predict`: ViT clothes classification
-- `/clip-predict`: CLIP-based text-image similarity for fashion labels
+FastAPI server exposing endpoints:
 - `/analyze`: Combined category + attribute extraction + dominant colors
 - `/embed`: Text embeddings from all-MiniLM-L6-v2
 

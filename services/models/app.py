@@ -1,5 +1,5 @@
 # filename: app.py
-from fastapi import FastAPI, File, UploadFile, Form
+from fastapi import FastAPI, File, UploadFile
 from transformers import (
     AutoProcessor,
     AutoModelForImageClassification,
@@ -9,7 +9,7 @@ from transformers import (
 from PIL import Image
 import torch
 import io
-from typing import List, Dict, Tuple
+from typing import List, Dict
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
@@ -20,70 +20,10 @@ vit_model_name = "jolual2747/vit-clothes-classification"
 vit_processor = AutoProcessor.from_pretrained(vit_model_name)
 vit_model = AutoModelForImageClassification.from_pretrained(vit_model_name)
 
-
-@app.post("/predict")
-async def predict(file: UploadFile = File(...)):
-    """Predict garment type using ViT-based classification"""
-    image_data = await file.read()
-    image = Image.open(io.BytesIO(image_data)).convert("RGB")
-
-    inputs = vit_processor(images=image, return_tensors="pt")
-
-    with torch.no_grad():
-        outputs = vit_model(**inputs)
-        probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
-        top_prob, top_idx = torch.topk(probs, k=3)
-        results = [
-            {"label": vit_model.config.id2label[idx.item()], "confidence": prob.item()}
-            for prob, idx in zip(top_prob[0], top_idx[0])
-        ]
-
-    return {"predictions": results}
-
-
-# --- Model 2: Fashion CLIP (for text-image similarity) ---
+# Fashion CLIP used for attribute ranking
 clip_model_name = "patrickjohncyh/fashion-clip"
 clip_model = CLIPModel.from_pretrained(clip_model_name)
 clip_processor = CLIPProcessor.from_pretrained(clip_model_name)
-
-
-@app.post("/clip-predict")
-async def clip_predict(
-    file: UploadFile = File(...),
-    labels: str = Form(...)
-):
-    """
-    Compare an image with a list of fashion labels (comma-separated)
-    Example: "T-shirt,Jeans,Coat,Sneakers"
-    """
-    image_data = await file.read()
-    image = Image.open(io.BytesIO(image_data)).convert("RGB")
-
-    # Split labels
-    text_labels = [label.strip() for label in labels.split(",") if label.strip()]
-
-    # Process inputs
-    inputs = clip_processor(
-        text=text_labels,
-        images=image,
-        return_tensors="pt",
-        padding=True
-    )
-
-    # Compute similarity
-    with torch.no_grad():
-        outputs = clip_model(**inputs)
-        logits_per_image = outputs.logits_per_image  # (1, num_labels)
-        probs = logits_per_image.softmax(dim=1)
-
-    # Sort and return results
-    sorted_probs, indices = torch.sort(probs, descending=True)
-    results = [
-        {"label": text_labels[idx], "confidence": sorted_probs[0, i].item()}
-        for i, idx in enumerate(indices[0])
-    ]
-
-    return {"predictions": results}
 
 
 #############################################

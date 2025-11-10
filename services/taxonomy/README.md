@@ -209,19 +209,6 @@ Output location: `src/main/resources/static/widget/browser/`
 
 ## 🌐 API Endpoints
 
-### Image Processing
-
-#### Process Incoming Images
-```http
-POST /api/process/income
-```
-
-Scans `app.income-dir` for new images and processes them.
-
-**Response**: List of `ProcessingResult` objects
-
----
-
 ### Analysis Results
 
 #### Get All Results
@@ -630,4 +617,3 @@ Display in PrimeNG Carousel
 ---
 
 **Built with ❤️ using Spring Boot, Angular, and AI**
-

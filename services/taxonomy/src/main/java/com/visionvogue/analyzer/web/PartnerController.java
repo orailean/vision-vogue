@@ -28,6 +28,11 @@ public class PartnerController {
         return ResponseEntity.created(URI.create("/api/partners/" + saved.getId())).body(saved);
     }
 
+    @GetMapping
+    public ResponseEntity<Iterable<Partner>> getAll() {
+        return ResponseEntity.ok(partnerRepository.findAll());
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<Partner> getById(@PathVariable("id") UUID id) {
         return partnerRepository.findById(id)

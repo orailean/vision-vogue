@@ -301,6 +301,27 @@ Content-Type: application/json
 GET /api/partners
 ```
 
+**Response**: Array of all partner objects
+```json
+[
+  {
+    "id": "8d3a83ff-5a9f-4d57-8671-9397c1b02a25",
+    "name": "Acme Fashion Corp"
+  },
+  {
+    "id": "b4d3e783-19fd-4c49-bbaf-099d2b957146",
+    "name": "Fashion Retailer Co"
+  }
+]
+```
+
+#### Get Partner by ID
+```http
+GET /api/partners/{id}
+```
+
+**Response**: Single partner object or 404 if not found
+
 ---
 
 ### Widget & Images

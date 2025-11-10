@@ -1,5 +1,6 @@
 package com.visionvogue.analyzer.web;
 
+import com.visionvogue.analyzer.config.AppProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
@@ -21,20 +22,27 @@ public class WidgetController {
 
     private static final Logger log = LoggerFactory.getLogger(WidgetController.class);
 
+    private final AppProperties appProperties;
+
+    public WidgetController(AppProperties appProperties) {
+        this.appProperties = appProperties;
+    }
+
     // Serve product images
     @GetMapping("/api/images/{partnerId}/{filename:.+}")
     public ResponseEntity<Resource> getImage(@PathVariable("partnerId") String partnerId, @PathVariable("filename") String filename) {
         try {
             log.debug("Requesting image: partnerId={}, filename={}", partnerId, filename);
 
-            // Try processed directory first
-            Path imagePath = Paths.get("data/processed", partnerId, filename);
-            log.debug("Checking path: {}", imagePath.toAbsolutePath());
+            Path processedBase = Paths.get(appProperties.getProcessedDir()).toAbsolutePath().normalize();
+            log.debug("Resolved processed base directory: {}", processedBase);
+
+            Path imagePath = resolveInside(processedBase, partnerId, filename);
+            log.debug("Checking path: {}", imagePath);
 
             if (!Files.exists(imagePath)) {
-                // Fallback to root processed directory
-                imagePath = Paths.get("data/processed", filename);
-                log.debug("Trying fallback path: {}", imagePath.toAbsolutePath());
+                imagePath = resolveInside(processedBase, filename);
+                log.debug("Trying fallback path: {}", imagePath);
             }
 
             if (!Files.exists(imagePath)) {
@@ -42,7 +50,7 @@ public class WidgetController {
                 return ResponseEntity.notFound().build();
             }
 
-            log.debug("Image found at: {}", imagePath.toAbsolutePath());
+            log.debug("Image found at: {}", imagePath);
 
             Resource resource = new FileSystemResource(imagePath);
 
@@ -53,10 +61,25 @@ public class WidgetController {
                     .contentType(MediaType.parseMediaType(contentType))
                     .body(resource);
 
+        } catch (IllegalArgumentException e) {
+            log.warn("Rejected image request {}/{}: {}", partnerId, filename, e.getMessage());
+            return ResponseEntity.notFound().build();
         } catch (Exception e) {
             log.error("Error serving image {}/{}: {}", partnerId, filename, e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
+    }
+
+    private Path resolveInside(Path base, String... segments) {
+        Path resolved = base;
+        for (String segment : segments) {
+            resolved = resolved.resolve(segment);
+        }
+        resolved = resolved.normalize();
+        if (!resolved.startsWith(base)) {
+            throw new IllegalArgumentException("Path escapes base directory");
+        }
+        return resolved;
     }
 
     private String getContentType(Path imagePath) {
@@ -86,4 +109,3 @@ public class WidgetController {
         return "application/octet-stream";
     }
 }
-

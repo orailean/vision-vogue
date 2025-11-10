@@ -22,7 +22,7 @@ server:
 
 app:
   analyze-url: http://127.0.0.1:8000/analyze
-  income-dir: data/income
+  income-dir: data/incoming
   processed-dir: data/processed
   failed-dir: data/failed
   top-k-category: 3

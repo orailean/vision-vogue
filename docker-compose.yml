@@ -27,8 +27,8 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
     # Uncomment to persist HF cache across builds/runs
-    # volumes:
-    #   - ./data/hf_cache:/root/.cache/huggingface
+    volumes:
+       - hf_cache:/root/.cache/huggingface
 
   taxonomy:
     build: ./services/taxonomy
@@ -47,8 +47,7 @@ services:
       EMBEDDING_API_URL: http://models-api:8000/embed
     ports:
       - "8080:8080"
-    volumes:
-      - ./services/taxonomy/data:/app/data
 
 volumes:
   db_data:
+  hf_cache:

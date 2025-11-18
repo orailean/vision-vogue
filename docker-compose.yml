@@ -25,6 +25,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - HF_TOKEN=${HF_TOKEN}
       - PYTHONUNBUFFERED=1
     # Uncomment to persist HF cache across builds/runs
     volumes:

@@ -4,6 +4,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - HF_TOKEN=${HF_TOKEN}
       - PYTHONUNBUFFERED=1
       - PALIGEMMA_DTYPE=${PALIGEMMA_DTYPE:-fp16}
     # Uncomment to persist HF cache locally (optional)

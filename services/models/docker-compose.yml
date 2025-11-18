@@ -5,7 +5,7 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+      - PALIGEMMA_DTYPE=${PALIGEMMA_DTYPE:-fp16}
     # Uncomment to persist HF cache locally (optional)
-    # volumes:
-    #   - ./data/hf_cache:/root/.cache/huggingface
-
+    volumes:
+      - ./data/hf_cache:/root/.cache/huggingface

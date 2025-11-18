@@ -14,6 +14,8 @@ Prerequisites: Python 3.10+ and internet access (to download models on first run
 bash scripts/start.sh           # creates .venv, installs deps, runs server
 # Optional:
 PORT=9000 RELOAD=1 bash scripts/start.sh
+# Memory-sensitive runs (force fp16 precision; defaults to bf16 on GPU / fp32 on CPU):
+PALIGEMMA_DTYPE=fp16 bash scripts/start.sh
 ```
 
 Open http://127.0.0.1:8000/docs (or chosen port) for Swagger UI.
@@ -31,6 +33,8 @@ Or using docker-compose:
 
 ```
 docker compose up --build
+# Override dtype (example: fp16) for lower memory usage
+PALIGEMMA_DTYPE=fp16 docker compose up --build
 ```
 
 Swagger UI: http://127.0.0.1:8000/docs
@@ -50,6 +54,9 @@ Replace `<username>` (and add a custom tag if desired) before pushing.
 ## Notes
 
 - The first request triggers model downloads from Hugging Face; subsequent runs are cached.
+- Garment classification is powered by the `google/paligemma-3b-mix-224` vision-language model.
+- Attribute extraction also uses Paligemma through JSON prompting, so no separate CLIP model is required.
+- Set `PALIGEMMA_DTYPE` (bf16/fp16/fp32) if you need to override the default precision for memory or accuracy reasons.
 - If you want to persist the HF cache across container runs, uncomment the `volumes` section in `docker-compose.yml`.
  - Attribute groups: color, pattern, sleeve, neckline, fit, length, material, style, rise, waist, closure, gender (men's/women's/unisex/boys'/girls').
 
@@ -57,8 +64,8 @@ Replace `<username>` (and add a custom tag if desired) before pushing.
 
 POST `/analyze` (multipart/form-data)
 - `file`: image file
-- `top_k_category` (int, default 3): top category predictions from ViT
-- `top_per_attribute` (int, default 1): number of options returned per attribute group
+- `top_k_category` (int, default 3): top garment predictions from PaliGemma
+- `top_per_attribute` (int, default 1): number of Paligemma-generated options returned per attribute group
 - `n_colors` (int, default 5): number of dominant colors extracted
 
 Response example:

@@ -2,29 +2,38 @@
 from fastapi import FastAPI, File, UploadFile
 from transformers import (
     AutoProcessor,
-    AutoModelForImageClassification,
-    CLIPProcessor,
-    CLIPModel
+    PaliGemmaForConditionalGeneration,
 )
 from PIL import Image
 import torch
 import io
-from typing import List, Dict
+import json
+import os
+from typing import List, Dict, Any
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
-app = FastAPI(title="Garment Classification & Fashion CLIP API")
+app = FastAPI(title="Garment Classification & Attribute API")
 
-# --- Model 1: ViT clothes classification ---
-vit_model_name = "jolual2747/vit-clothes-classification"
-vit_processor = AutoProcessor.from_pretrained(vit_model_name)
-vit_model = AutoModelForImageClassification.from_pretrained(vit_model_name)
-
-# Fashion CLIP used for attribute ranking
-clip_model_name = "patrickjohncyh/fashion-clip"
-clip_model = CLIPModel.from_pretrained(clip_model_name)
-clip_processor = CLIPProcessor.from_pretrained(clip_model_name)
-
+# --- Garment classification via PaliGemma ---
+paligemma_model_name = "google/paligemma-3b-mix-224"
+paligemma_processor = AutoProcessor.from_pretrained(paligemma_model_name)
+_dtype_override = os.getenv("PALIGEMMA_DTYPE", "").lower()
+if _dtype_override in {"bf16", "bfloat16"} and hasattr(torch, "bfloat16"):
+    paligemma_dtype = torch.bfloat16
+elif _dtype_override in {"fp16", "float16", "half"}:
+    paligemma_dtype = torch.float16
+elif _dtype_override in {"fp32", "float32"}:
+    paligemma_dtype = torch.float32
+else:
+    paligemma_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+paligemma_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+paligemma_model = PaliGemmaForConditionalGeneration.from_pretrained(
+    paligemma_model_name,
+    torch_dtype=paligemma_dtype,
+)
+paligemma_model.to(paligemma_device)
+paligemma_model.eval()
 
 #############################################
 # Attribute analysis and rich predictions   #
@@ -182,21 +191,115 @@ ATTRIBUTE_SETS: Dict[str, List[str]] = {
     ],
 }
 
+ATTRIBUTE_GROUPS: List[str] = list(ATTRIBUTE_SETS.keys())
+ATTRIBUTE_HINT_LINES: List[str] = [
+    f"{group}: {', '.join(ATTRIBUTE_SETS[group][: min(6, len(ATTRIBUTE_SETS[group]))])}"
+    for group in ATTRIBUTE_GROUPS
+]
 
-def _clip_rank(image: Image.Image, candidates: List[str], prompt_template: str = "{}"):
-    """Rank candidate labels for an image using CLIP zero-shot prompting.
 
-    Returns list of (label, probability) sorted desc.
-    """
-    texts = [prompt_template.format(lbl) for lbl in candidates]
-    inputs = clip_processor(text=texts, images=image, return_tensors="pt", padding=True)
+def _paligemma_device() -> torch.device:
+    return paligemma_device
+
+
+def _paligemma_generate(
+    image: Image.Image,
+    prompt: str,
+    *,
+    max_new_tokens: int = 256,
+    temperature: float = 0.2,
+) -> str:
+    device = _paligemma_device()
+    inputs = paligemma_processor(text=prompt, images=image, return_tensors="pt")
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+    if "pixel_values" in inputs:
+        inputs["pixel_values"] = inputs["pixel_values"].to(device=device, dtype=paligemma_dtype)
     with torch.no_grad():
-        outputs = clip_model(**inputs)
-        logits_per_image = outputs.logits_per_image
-        probs = logits_per_image.softmax(dim=1)
-    sorted_probs, indices = torch.sort(probs, descending=True)
-    ranked = [(candidates[idx], float(sorted_probs[0, i].item())) for i, idx in enumerate(indices[0])]
-    return ranked
+        generated_ids = paligemma_model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            do_sample=False,
+            temperature=temperature,
+            top_p=0.95,
+        )
+    output = paligemma_processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+    return output.strip()
+
+
+PALIGEMMA_CATEGORY_PROMPT = (
+    "You are a professional fashion product classifier. Consider the clothing item in the photo "
+    "and respond ONLY with a JSON array containing at most {top_k} entries. Each entry must include "
+    "\"label\" and \"confidence\" (0-1) describing the garment category (e.g., \"t-shirt\", "
+    "\"hoodie\", \"maxi dress\", \"sneakers\")."
+)
+
+
+def _build_attribute_prompt(top_per_group: int) -> str:
+    group_list = ", ".join(ATTRIBUTE_GROUPS)
+    hints = "\n".join(ATTRIBUTE_HINT_LINES)
+    example = '{{"color": [{{"label": "navy", "confidence": 0.7}}], "pattern": [{{"label": "solid", "confidence": 0.3}}]}}'
+    return (
+        "You are a senior fashion merchandiser. Analyze the garment photo and infer detailed attributes. "
+        f"Return ONLY a JSON object with the following keys: {group_list}. "
+        f"Each key must map to an array with up to {max(1, top_per_group)} objects containing "
+        "\"label\" and \"confidence\" (0-1). Use concise fashion terminology and keep confidences normalized. "
+        f"Attribute hints per group (use these as guidance, but other precise terms are allowed):\n{hints}\n"
+        f"Example format: {example}"
+    )
+
+
+def _normalize_confidences(items: List[Dict[str, Any]]) -> None:
+    scores = [max(0.0, float(item.get("confidence", 0.0))) for item in items]
+    total = sum(scores)
+    if total <= 0:
+        even = 1.0 / len(items) if items else 0
+        for item in items:
+            item["confidence"] = round(float(even), 4)
+        return
+    for idx, item in enumerate(items):
+        item["confidence"] = round(float(scores[idx] / total), 4)
+
+
+def _parse_paligemma_categories(text: str, top_k: int) -> List[Dict[str, float]]:
+    start = text.find("[")
+    end = text.rfind("]")
+    parsed: List[Dict[str, float]] = []
+    if start != -1 and end != -1 and end > start:
+        snippet = text[start:end+1]
+        try:
+            data = json.loads(snippet)
+            if isinstance(data, dict):
+                data = [data]
+            if isinstance(data, list):
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    label = str(item.get("label") or item.get("category") or "").strip()
+                    if not label:
+                        continue
+                    confidence = item.get("confidence")
+                    try:
+                        conf_val = float(confidence) if confidence is not None else 0.0
+                    except (TypeError, ValueError):
+                        conf_val = 0.0
+                    parsed.append({"label": label, "confidence": conf_val})
+        except json.JSONDecodeError:
+            parsed = []
+    if not parsed:
+        fallback_label = text.splitlines()[0].strip() if text else ""
+        if not fallback_label:
+            fallback_label = "unknown garment"
+        parsed = [{"label": fallback_label, "confidence": 1.0}]
+    parsed = parsed[: max(1, top_k)]
+    _normalize_confidences(parsed)
+    return parsed
+
+
+def classify_garment(image: Image.Image, top_k: int) -> List[Dict[str, float]]:
+    max_top_k = max(1, top_k)
+    prompt = PALIGEMMA_CATEGORY_PROMPT.format(top_k=max_top_k)
+    raw = _paligemma_generate(image, prompt, max_new_tokens=192)
+    return _parse_paligemma_categories(raw, top_k=max(1, top_k))
 
 
 def extract_dominant_colors(image: Image.Image, n_colors: int = 5):
@@ -222,39 +325,61 @@ def extract_dominant_colors(image: Image.Image, n_colors: int = 5):
     return swatches
 
 
-def analyze_attributes(image: Image.Image, top_per_group: int = 1):
-    """Analyze several attribute groups via CLIP zero-shot ranking."""
-    templates = {
-        "color": "a photo of a {} clothing item",
-        "pattern": "{} pattern clothing",
-        "sleeve": "a {} sleeve shirt",
-        "neckline": "a {} neckline top",
-        "fit": "a {} fit clothing",
-        "length": "a {} length garment",
-        "material": "{} material clothing",
-        "style": "{} style outfit",
-        "rise": "{} jeans",
-        "waist": "{} skirt",
-        "closure": "a clothing with {}",
-        "gender": "a {} clothing item",
-        "occasion": "{} clothing",
-        "season": "{} clothing",
-        "detail": "clothing with {}",
-        "silhouette": "a {} silhouette garment",
-        "transparency": "{} fabric clothing",
-        "texture": "{} texture clothing",
-    }
+def _coerce_attribute_items(raw: Any) -> List[Dict[str, float]]:
+    items: List[Dict[str, float]] = []
+    if isinstance(raw, list):
+        for value in raw:
+            items.extend(_coerce_attribute_items(value))
+    elif isinstance(raw, dict):
+        label = str(raw.get("label") or raw.get("value") or "").strip()
+        if label:
+            confidence = raw.get("confidence")
+            try:
+                conf_val = float(confidence) if confidence is not None else 0.0
+            except (TypeError, ValueError):
+                conf_val = 0.0
+            items.append({"label": label, "confidence": conf_val})
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if text:
+            items.append({"label": text, "confidence": 0.0})
+    return items
 
+
+def _parse_paligemma_attributes(text: str, top_per_group: int) -> Dict[str, List[Dict[str, float]]]:
+    start = text.find("{")
+    end = text.rfind("}")
+    payload: Dict[str, Any] = {}
+    if start != -1 and end != -1 and end > start:
+        snippet = text[start:end+1]
+        try:
+            candidate = json.loads(snippet)
+            if isinstance(candidate, dict):
+                payload = candidate
+        except json.JSONDecodeError:
+            payload = {}
     results: Dict[str, List[Dict[str, float]]] = {}
-    for group, candidates in ATTRIBUTE_SETS.items():
-        prompt = templates.get(group, "{}")
-        ranked = _clip_rank(image, candidates, prompt)
-        topk = [
-            {"label": lbl, "confidence": float(prob)}
-            for lbl, prob in ranked[: max(1, top_per_group)]
-        ]
-        results[group] = topk
+    top_n = max(1, top_per_group)
+    for group in ATTRIBUTE_GROUPS:
+        raw_group = payload.get(group)
+        if raw_group is None:
+            raw_group = payload.get(group.capitalize())
+        items = _coerce_attribute_items(raw_group)
+        if not items:
+            fallback = ATTRIBUTE_SETS[group][0] if ATTRIBUTE_SETS[group] else "unspecified"
+            items = [{"label": fallback, "confidence": 1.0}]
+        items = items[:top_n]
+        _normalize_confidences(items)
+        results[group] = items
     return results
+
+
+def analyze_attributes(image: Image.Image, top_per_group: int = 1):
+    """Infer garment attributes via Paligemma JSON prompting."""
+    limit = max(1, top_per_group)
+    prompt = _build_attribute_prompt(limit)
+    raw = _paligemma_generate(image, prompt, max_new_tokens=512, temperature=0.3)
+    return _parse_paligemma_attributes(raw, top_per_group=limit)
 
 
 @app.post("/analyze")
@@ -265,24 +390,15 @@ async def analyze(
     n_colors: int = 5,
 ):
     """
-    Comprehensive analysis: category, attribute predictions (via CLIP), and dominant colors.
+    Comprehensive analysis: category, attribute predictions (via Paligemma), and dominant colors.
     """
     image_data = await file.read()
     image = Image.open(io.BytesIO(image_data)).convert("RGB")
 
-    # Category via ViT
-    inputs = vit_processor(images=image, return_tensors="pt")
-    with torch.no_grad():
-        outputs = vit_model(**inputs)
-        probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
-        k = max(1, min(int(top_k_category), probs.shape[-1]))
-        top_prob, top_idx = torch.topk(probs, k=k)
-        categories = [
-            {"label": vit_model.config.id2label[idx.item()], "confidence": float(prob.item())}
-            for prob, idx in zip(top_prob[0], top_idx[0])
-        ]
+    # Category via PaliGemma
+    categories = classify_garment(image, top_k=int(max(1, top_k_category)))
 
-    # Attributes via CLIP
+    # Attributes via Paligemma
     attributes = analyze_attributes(image, top_per_group=int(max(1, top_per_attribute)))
 
     # Dominant colors via quantization

@@ -6,3 +6,4 @@ Pillow>=10.0
 python-multipart>=0.0.7
 safetensors>=0.4
 sentence-transformers>=2.2
+sentencepiece>=0.1.99

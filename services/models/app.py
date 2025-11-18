@@ -9,11 +9,23 @@ import torch
 import io
 import json
 import os
+import logging
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(title="Garment Classification & Attribute API")
+
+logger.info("=" * 60)
+logger.info("Starting Garment Classification & Attribute API")
+logger.info("=" * 60)
 
 
 def _load_hf_token() -> Optional[str]:
@@ -21,35 +33,62 @@ def _load_hf_token() -> Optional[str]:
     for key in ("HF_TOKEN", "HUGGINGFACE_TOKEN", "HF_API_TOKEN"):
         value = os.getenv(key)
         if value:
+            logger.info(f"Found HF token in environment variable: {key}")
             return value.strip()
+    logger.warning("No HuggingFace token found in environment variables")
     return None
 
 
 hf_token = _load_hf_token()
 
 # --- Garment classification via PaliGemma ---
+logger.info("Starting PaliGemma model initialization...")
 paligemma_model_name = "google/paligemma-3b-mix-224"
+logger.info(f"Model name: {paligemma_model_name}")
+
+logger.info("Loading PaliGemma processor...")
 paligemma_processor = AutoProcessor.from_pretrained(
     paligemma_model_name,
     token=hf_token,
+    use_fast=False,
 )
+logger.info("✓ PaliGemma processor loaded successfully")
+
+logger.info("Configuring model dtype...")
 _dtype_override = os.getenv("PALIGEMMA_DTYPE", "").lower()
 if _dtype_override in {"bf16", "bfloat16"} and hasattr(torch, "bfloat16"):
     paligemma_dtype = torch.bfloat16
+    logger.info(f"Using dtype: bfloat16 (from env: {_dtype_override})")
 elif _dtype_override in {"fp16", "float16", "half"}:
     paligemma_dtype = torch.float16
+    logger.info(f"Using dtype: float16 (from env: {_dtype_override})")
 elif _dtype_override in {"fp32", "float32"}:
     paligemma_dtype = torch.float32
+    logger.info(f"Using dtype: float32 (from env: {_dtype_override})")
 else:
     paligemma_dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
+    logger.info(f"Using dtype: {paligemma_dtype} (auto-detected, CUDA available: {torch.cuda.is_available()})")
+
 paligemma_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+logger.info(f"Using device: {paligemma_device}")
+
+logger.info("Loading PaliGemma model (this may take a few minutes)...")
+logger.info("Loading checkpoint shards - please wait...")
 paligemma_model = PaliGemmaForConditionalGeneration.from_pretrained(
     paligemma_model_name,
-    torch_dtype=paligemma_dtype,
+    dtype=paligemma_dtype,
     token=hf_token,
 )
+logger.info("✓ PaliGemma model checkpoint loaded successfully")
+
+logger.info(f"Moving model to device: {paligemma_device}...")
 paligemma_model.to(paligemma_device)
+logger.info("✓ Model moved to device")
+
+logger.info("Setting model to evaluation mode...")
 paligemma_model.eval()
+logger.info("✓ PaliGemma model ready for inference")
+logger.info("=" * 60)
 
 #############################################
 # Attribute analysis and rich predictions   #
@@ -226,17 +265,18 @@ def _paligemma_generate(
     temperature: float = 0.2,
 ) -> str:
     device = _paligemma_device()
-    inputs = paligemma_processor(text=prompt, images=image, return_tensors="pt")
+    # Add <image> token at the beginning of the prompt as recommended by PaliGemma
+    prompt_with_image = f"<image>{prompt}"
+    inputs = paligemma_processor(text=prompt_with_image, images=image, return_tensors="pt")
     inputs = {k: v.to(device) for k, v in inputs.items()}
     if "pixel_values" in inputs:
         inputs["pixel_values"] = inputs["pixel_values"].to(device=device, dtype=paligemma_dtype)
     with torch.no_grad():
+        # Remove temperature and top_p when do_sample=False to avoid warnings
         generated_ids = paligemma_model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
             do_sample=False,
-            temperature=temperature,
-            top_p=0.95,
         )
     output = paligemma_processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
     return output.strip()
@@ -408,18 +448,28 @@ async def analyze(
     """
     Comprehensive analysis: category, attribute predictions (via Paligemma), and dominant colors.
     """
+    logger.info(f"Received /analyze request: file={file.filename}, top_k_category={top_k_category}, top_per_attribute={top_per_attribute}, n_colors={n_colors}")
+
     image_data = await file.read()
     image = Image.open(io.BytesIO(image_data)).convert("RGB")
+    logger.info(f"Image loaded: size={image.size}, mode={image.mode}")
 
     # Category via PaliGemma
+    logger.info("Classifying garment category...")
     categories = classify_garment(image, top_k=int(max(1, top_k_category)))
+    logger.info(f"Categories predicted: {categories}")
 
-    # Attributes via Paligemma
+    # Attributes via PaliGemma
+    logger.info("Analyzing garment attributes...")
     attributes = analyze_attributes(image, top_per_group=int(max(1, top_per_attribute)))
+    logger.info(f"Attributes analyzed: {len(attributes)} attribute groups")
 
     # Dominant colors via quantization
+    logger.info("Extracting dominant colors...")
     colors = extract_dominant_colors(image, n_colors=int(max(1, n_colors)))
+    logger.info(f"Colors extracted: {len(colors)} colors")
 
+    logger.info("✓ Analysis complete")
     return {
         "category": categories,
         "attributes": attributes,
@@ -428,8 +478,14 @@ async def analyze(
 
 
 # --- Text embedding model (all-MiniLM-L6-v2) ---
+logger.info("Loading sentence-transformers embedding model...")
 embed_model_name = "sentence-transformers/all-MiniLM-L6-v2"
+logger.info(f"Embedding model: {embed_model_name}")
 embed_model = SentenceTransformer(embed_model_name)
+logger.info("✓ Embedding model loaded successfully")
+logger.info("=" * 60)
+logger.info("🚀 ALL MODELS LOADED - API READY TO SERVE REQUESTS")
+logger.info("=" * 60)
 
 
 class EmbedRequest(BaseModel):

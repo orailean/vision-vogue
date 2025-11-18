@@ -27,7 +27,23 @@ services:
     environment:
       - HF_TOKEN=${HF_TOKEN}
       - PYTHONUNBUFFERED=1
-      - PALIGEMMA_DTYPE=${PALIGEMMA_DTYPE:-fp16}
+      # Use fp32 on CPU for stability (fp16/8-bit don't work well on CPU)
+      - PALIGEMMA_DTYPE=${PALIGEMMA_DTYPE:-fp32}
+      - PALIGEMMA_MODEL=${PALIGEMMA_MODEL:-google/paligemma-3b-pt-224}
+      - PALIGEMMA_LOAD_IN_8BIT=false
+    # Increase memory limits - fp32 model needs ~12-14GB
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+        reservations:
+          memory: 8G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     # Uncomment to persist HF cache across builds/runs
     volumes:
        - hf_cache:/root/.cache/huggingface
@@ -40,7 +56,7 @@ services:
       db:
         condition: service_healthy
       models-api:
-        condition: service_started
+        condition: service_healthy
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/vision_vogue
       SPRING_DATASOURCE_USERNAME: postgres

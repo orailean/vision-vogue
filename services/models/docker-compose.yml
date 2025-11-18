@@ -7,6 +7,8 @@ services:
       - HF_TOKEN=${HF_TOKEN}
       - PYTHONUNBUFFERED=1
       - PALIGEMMA_DTYPE=${PALIGEMMA_DTYPE:-fp16}
+      - PALIGEMMA_MODEL=${PALIGEMMA_MODEL:-google/paligemma-3b-pt-224}
+      - PALIGEMMA_LOAD_IN_8BIT=${PALIGEMMA_LOAD_IN_8BIT:-true}
     # Uncomment to persist HF cache locally (optional)
     volumes:
       - ./data/hf_cache:/root/.cache/huggingface

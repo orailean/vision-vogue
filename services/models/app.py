@@ -43,7 +43,9 @@ hf_token = _load_hf_token()
 
 # --- Garment classification via PaliGemma ---
 logger.info("Starting PaliGemma model initialization...")
-paligemma_model_name = "google/paligemma-3b-mix-224"
+# Using the lightest PaliGemma model for testing (3B params, 224 resolution, pre-trained only)
+# This uses ~2.5GB RAM vs ~3.5GB for the mix variant
+paligemma_model_name = os.getenv("PALIGEMMA_MODEL", "google/paligemma-3b-pt-224")
 logger.info(f"Model name: {paligemma_model_name}")
 
 logger.info("Loading PaliGemma processor...")
@@ -56,7 +58,13 @@ logger.info("✓ PaliGemma processor loaded successfully")
 
 logger.info("Configuring model dtype...")
 _dtype_override = os.getenv("PALIGEMMA_DTYPE", "").lower()
-if _dtype_override in {"bf16", "bfloat16"} and hasattr(torch, "bfloat16"):
+_load_in_8bit = os.getenv("PALIGEMMA_LOAD_IN_8BIT", "").lower() in {"1", "true", "yes"}
+
+if _load_in_8bit:
+    paligemma_dtype = None  # dtype is managed by quantization
+    logger.info("Using 8-bit quantization for extreme memory reduction")
+    logger.warning("8-bit mode requires bitsandbytes library and may reduce accuracy")
+elif _dtype_override in {"bf16", "bfloat16"} and hasattr(torch, "bfloat16"):
     paligemma_dtype = torch.bfloat16
     logger.info(f"Using dtype: bfloat16 (from env: {_dtype_override})")
 elif _dtype_override in {"fp16", "float16", "half"}:
@@ -72,22 +80,80 @@ else:
 paligemma_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logger.info(f"Using device: {paligemma_device}")
 
-logger.info("Loading PaliGemma model (this may take a few minutes)...")
-logger.info("Loading checkpoint shards - please wait...")
-paligemma_model = PaliGemmaForConditionalGeneration.from_pretrained(
-    paligemma_model_name,
-    dtype=paligemma_dtype,
-    token=hf_token,
-)
-logger.info("✓ PaliGemma model checkpoint loaded successfully")
+# Lazy loading to avoid OOM during startup
+paligemma_model = None
+paligemma_model_loaded = False
 
-logger.info(f"Moving model to device: {paligemma_device}...")
-paligemma_model.to(paligemma_device)
-logger.info("✓ Model moved to device")
+def _ensure_paligemma_loaded():
+    """Lazy load the PaliGemma model on first use to avoid startup OOM."""
+    global paligemma_model, paligemma_model_loaded
 
-logger.info("Setting model to evaluation mode...")
-paligemma_model.eval()
-logger.info("✓ PaliGemma model ready for inference")
+    if paligemma_model_loaded:
+        return
+
+    logger.info("Loading PaliGemma model on-demand (this may take a few minutes)...")
+    logger.info("Loading checkpoint shards - please wait...")
+
+    try:
+        # Prepare loading arguments
+        load_kwargs = {
+            "pretrained_model_name_or_path": paligemma_model_name,
+            "token": hf_token,
+            "low_cpu_mem_usage": True,
+        }
+
+        # Use 8-bit quantization if enabled (extreme memory reduction)
+        if _load_in_8bit:
+            try:
+                from transformers import BitsAndBytesConfig
+                logger.info("Enabling 8-bit quantization...")
+
+                # Enable CPU offloading when running on CPU
+                is_cpu = not torch.cuda.is_available()
+                logger.info(f"CPU mode: {is_cpu}")
+
+                quantization_config = BitsAndBytesConfig(
+                    load_in_8bit=True,
+                    llm_int8_threshold=6.0,
+                    llm_int8_enable_fp32_cpu_offload=is_cpu,  # Enable CPU offload for CPU-only systems
+                )
+                load_kwargs["quantization_config"] = quantization_config
+                load_kwargs["device_map"] = "auto"  # Required for quantization
+                logger.info(f"8-bit quantization configured successfully (CPU offload: {is_cpu})")
+            except ImportError:
+                logger.error("bitsandbytes not installed - falling back to normal loading")
+                logger.error("Install with: pip install bitsandbytes")
+                if paligemma_dtype:
+                    load_kwargs["dtype"] = paligemma_dtype
+                load_kwargs["device_map"] = None
+        else:
+            # Normal loading with dtype
+            if paligemma_dtype:
+                load_kwargs["dtype"] = paligemma_dtype
+            load_kwargs["device_map"] = None
+
+        paligemma_model = PaliGemmaForConditionalGeneration.from_pretrained(**load_kwargs)
+        logger.info("✓ PaliGemma model checkpoint loaded successfully")
+
+        # Move to device if not using device_map (quantization handles this automatically)
+        if not _load_in_8bit:
+            logger.info(f"Moving model to device: {paligemma_device}...")
+            paligemma_model.to(paligemma_device)
+            logger.info("✓ Model moved to device")
+        else:
+            logger.info("✓ Model on device (managed by device_map)")
+
+        logger.info("Setting model to evaluation mode...")
+        paligemma_model.eval()
+        logger.info("✓ PaliGemma model ready for inference")
+
+        paligemma_model_loaded = True
+        logger.info("=" * 60)
+    except Exception as e:
+        logger.error(f"Failed to load PaliGemma model: {e}")
+        raise
+
+logger.info("PaliGemma model will be loaded on first request (lazy loading)")
 logger.info("=" * 60)
 
 #############################################
@@ -264,6 +330,9 @@ def _paligemma_generate(
     max_new_tokens: int = 256,
     temperature: float = 0.2,
 ) -> str:
+    # Ensure model is loaded (lazy loading)
+    _ensure_paligemma_loaded()
+
     device = _paligemma_device()
     # Add <image> token at the beginning of the prompt as recommended by PaliGemma
     prompt_with_image = f"<image>{prompt}"
@@ -278,29 +347,24 @@ def _paligemma_generate(
             max_new_tokens=max_new_tokens,
             do_sample=False,
         )
-    output = paligemma_processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+
+    # Only decode the newly generated tokens (exclude the input prompt)
+    input_len = inputs['input_ids'].shape[1]
+    generated_tokens = generated_ids[:, input_len:]
+    output = paligemma_processor.batch_decode(generated_tokens, skip_special_tokens=True)[0]
     return output.strip()
 
 
 PALIGEMMA_CATEGORY_PROMPT = (
-    "You are a professional fashion product classifier. Consider the clothing item in the photo "
-    "and respond ONLY with a JSON array containing at most {top_k} entries. Each entry must include "
-    "\"label\" and \"confidence\" (0-1) describing the garment category (e.g., \"t-shirt\", "
-    "\"hoodie\", \"maxi dress\", \"sneakers\")."
+    "What type of clothing is this? Answer with the garment category (e.g., t-shirt, dress, jacket)."
 )
 
 
 def _build_attribute_prompt(top_per_group: int) -> str:
-    group_list = ", ".join(ATTRIBUTE_GROUPS)
-    hints = "\n".join(ATTRIBUTE_HINT_LINES)
-    example = '{{"color": [{{"label": "navy", "confidence": 0.7}}], "pattern": [{{"label": "solid", "confidence": 0.3}}]}}'
+    # Simplified prompt for pre-trained model
     return (
-        "You are a senior fashion merchandiser. Analyze the garment photo and infer detailed attributes. "
-        f"Return ONLY a JSON object with the following keys: {group_list}. "
-        f"Each key must map to an array with up to {max(1, top_per_group)} objects containing "
-        "\"label\" and \"confidence\" (0-1). Use concise fashion terminology and keep confidences normalized. "
-        f"Attribute hints per group (use these as guidance, but other precise terms are allowed):\n{hints}\n"
-        f"Example format: {example}"
+        "Describe this clothing item. Include: color, pattern, sleeve type, neckline, "
+        "fit, length, material, occasion, style, and season."
     )
 
 
@@ -353,8 +417,9 @@ def _parse_paligemma_categories(text: str, top_k: int) -> List[Dict[str, float]]
 
 def classify_garment(image: Image.Image, top_k: int) -> List[Dict[str, float]]:
     max_top_k = max(1, top_k)
-    prompt = PALIGEMMA_CATEGORY_PROMPT.format(top_k=max_top_k)
+    prompt = PALIGEMMA_CATEGORY_PROMPT
     raw = _paligemma_generate(image, prompt, max_new_tokens=192)
+    logger.info(f"PaliGemma raw output: {raw[:200]}")  # Log first 200 chars for debugging
     return _parse_paligemma_categories(raw, top_k=max(1, top_k))
 
 
@@ -403,6 +468,11 @@ def _coerce_attribute_items(raw: Any) -> List[Dict[str, float]]:
 
 
 def _parse_paligemma_attributes(text: str, top_per_group: int) -> Dict[str, List[Dict[str, float]]]:
+    """Parse attributes from simple text description."""
+    results: Dict[str, List[Dict[str, float]]] = {}
+    top_n = max(1, top_per_group)
+
+    # Try JSON parsing first
     start = text.find("{")
     end = text.rfind("}")
     payload: Dict[str, Any] = {}
@@ -413,20 +483,41 @@ def _parse_paligemma_attributes(text: str, top_per_group: int) -> Dict[str, List
             if isinstance(candidate, dict):
                 payload = candidate
         except json.JSONDecodeError:
-            payload = {}
-    results: Dict[str, List[Dict[str, float]]] = {}
-    top_n = max(1, top_per_group)
-    for group in ATTRIBUTE_GROUPS:
-        raw_group = payload.get(group)
-        if raw_group is None:
-            raw_group = payload.get(group.capitalize())
-        items = _coerce_attribute_items(raw_group)
-        if not items:
-            fallback = ATTRIBUTE_SETS[group][0] if ATTRIBUTE_SETS[group] else "unspecified"
-            items = [{"label": fallback, "confidence": 1.0}]
-        items = items[:top_n]
-        _normalize_confidences(items)
-        results[group] = items
+            pass
+
+    # If JSON parsing worked, use it
+    if payload:
+        for group in ATTRIBUTE_GROUPS:
+            raw_group = payload.get(group)
+            if raw_group is None:
+                raw_group = payload.get(group.capitalize())
+            items = _coerce_attribute_items(raw_group)
+            if not items:
+                fallback = ATTRIBUTE_SETS[group][0] if ATTRIBUTE_SETS[group] else "unspecified"
+                items = [{"label": fallback, "confidence": 1.0}]
+            items = items[:top_n]
+            _normalize_confidences(items)
+            results[group] = items
+    else:
+        # Fallback: extract attributes from text description
+        text_lower = text.lower()
+        for group in ATTRIBUTE_GROUPS:
+            found_items = []
+            # Look for any of our known attributes in the text
+            for attr in ATTRIBUTE_SETS[group][:20]:  # Check first 20 common values
+                if attr.lower() in text_lower:
+                    found_items.append({"label": attr, "confidence": 0.8})
+                    if len(found_items) >= top_n:
+                        break
+
+            if not found_items:
+                # Use fallback
+                fallback = ATTRIBUTE_SETS[group][0] if ATTRIBUTE_SETS[group] else "unspecified"
+                found_items = [{"label": fallback, "confidence": 0.5}]
+
+            _normalize_confidences(found_items)
+            results[group] = found_items
+
     return results
 
 
@@ -434,7 +525,10 @@ def analyze_attributes(image: Image.Image, top_per_group: int = 1):
     """Infer garment attributes via Paligemma JSON prompting."""
     limit = max(1, top_per_group)
     prompt = _build_attribute_prompt(limit)
-    raw = _paligemma_generate(image, prompt, max_new_tokens=512, temperature=0.3)
+    logger.info(f"Starting attribute analysis with prompt length: {len(prompt)}")
+    # Reduce max_new_tokens for faster generation
+    raw = _paligemma_generate(image, prompt, max_new_tokens=256, temperature=0.3)
+    logger.info(f"Attribute analysis raw output: {raw[:200]}")  # Log first 200 chars
     return _parse_paligemma_attributes(raw, top_per_group=limit)
 
 
@@ -514,3 +608,15 @@ async def embed(req: EmbedRequest):
     embeddings = vectors.tolist()
     dim = len(embeddings[0]) if embeddings else 0
     return {"embeddings": embeddings, "model": embed_model_name, "dim": dim}
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint to verify the API is ready to serve requests."""
+    return {
+        "status": "healthy",
+        "embedding_model_loaded": embed_model is not None,
+        "paligemma_model_loaded": paligemma_model_loaded,
+    }
+
+

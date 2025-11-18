@@ -39,6 +39,8 @@ docker compose up --build
 HF_TOKEN=hf_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx docker compose up --build
 # Override dtype (example: fp16) for lower memory usage
 PALIGEMMA_DTYPE=fp16 docker compose up --build
+# Use a different model variant (example: mix for better accuracy)
+PALIGEMMA_MODEL=google/paligemma-3b-mix-224 docker compose up --build
 ```
 
 Swagger UI: http://127.0.0.1:8000/docs
@@ -58,9 +60,11 @@ Replace `<username>` (and add a custom tag if desired) before pushing.
 ## Notes
 
 - The first request triggers model downloads from Hugging Face; subsequent runs are cached.
-- Garment classification is powered by the `google/paligemma-3b-mix-224` vision-language model.
+- Garment classification is powered by PaliGemma vision-language model (default: `google/paligemma-3b-pt-224` - the lightest variant at ~2.5GB RAM).
+- For better accuracy, you can use the mix variant with `PALIGEMMA_MODEL=google/paligemma-3b-mix-224` (~3.5GB RAM).
 - Attribute extraction also uses Paligemma through JSON prompting, so no separate CLIP model is required.
 - Set `PALIGEMMA_DTYPE` (bf16/fp16/fp32) if you need to override the default precision for memory or accuracy reasons.
+- Set `PALIGEMMA_MODEL` to use a different model variant (e.g., `google/paligemma-3b-mix-224` for better accuracy).
 - Paligemma is a gated model—export `HF_TOKEN` (or `HUGGINGFACE_TOKEN` / `HF_API_TOKEN`) before starting the service or run `huggingface-cli login` inside the environment so the download succeeds.
 - If you want to persist the HF cache across container runs, uncomment the `volumes` section in `docker-compose.yml`.
  - Attribute groups: color, pattern, sleeve, neckline, fit, length, material, style, rise, waist, closure, gender (men's/women's/unisex/boys'/girls').

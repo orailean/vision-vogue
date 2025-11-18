@@ -9,15 +9,30 @@ import torch
 import io
 import json
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
 app = FastAPI(title="Garment Classification & Attribute API")
 
+
+def _load_hf_token() -> Optional[str]:
+    """Fetch a Hugging Face token from common env vars if set."""
+    for key in ("HF_TOKEN", "HUGGINGFACE_TOKEN", "HF_API_TOKEN"):
+        value = os.getenv(key)
+        if value:
+            return value.strip()
+    return None
+
+
+hf_token = _load_hf_token()
+
 # --- Garment classification via PaliGemma ---
 paligemma_model_name = "google/paligemma-3b-mix-224"
-paligemma_processor = AutoProcessor.from_pretrained(paligemma_model_name)
+paligemma_processor = AutoProcessor.from_pretrained(
+    paligemma_model_name,
+    token=hf_token,
+)
 _dtype_override = os.getenv("PALIGEMMA_DTYPE", "").lower()
 if _dtype_override in {"bf16", "bfloat16"} and hasattr(torch, "bfloat16"):
     paligemma_dtype = torch.bfloat16
@@ -31,6 +46,7 @@ paligemma_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 paligemma_model = PaliGemmaForConditionalGeneration.from_pretrained(
     paligemma_model_name,
     torch_dtype=paligemma_dtype,
+    token=hf_token,
 )
 paligemma_model.to(paligemma_device)
 paligemma_model.eval()

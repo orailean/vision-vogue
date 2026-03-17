@@ -9,7 +9,7 @@ public class AppProperties {
     private String processedDir = "data/processed";
     private String failedDir = "data/failed";
     private int topKCategory = 3;
-    private int topPerAttribute = 1;
+    private int topPerAttribute = 3;
     private int nColors = 5;
 
     public String getAnalyzeUrl() {
@@ -68,4 +68,3 @@ public class AppProperties {
         this.nColors = nColors;
     }
 }
-

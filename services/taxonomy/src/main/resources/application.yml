@@ -26,7 +26,7 @@ app:
   processed-dir: data/processed
   failed-dir: data/failed
   top-k-category: 3
-  top-per-attribute: 1
+  top-per-attribute: 3
   n-colors: 2
 
 embedding:
@@ -36,4 +36,3 @@ embedding:
 semantic:
   search:
     min-similarity-threshold: 0.35
-

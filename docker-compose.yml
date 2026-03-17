@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,7 +23,7 @@ services:
     container_name: vision_vogue_models_api
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "${MODELS_PORT:-8000}:8000"
     environment:
       - PYTHONUNBUFFERED=1
     # Uncomment to persist HF cache across builds/runs
@@ -47,7 +47,7 @@ services:
       EMBEDDING_API_URL: http://models-api:8000/embed
       SEMANTIC_SEARCH_MIN_SIMILARITY_THRESHOLD: 0.35
     ports:
-      - "8080:8080"
+      - "${TAXONOMY_PORT:-8080}:8080"
     volumes:
       - ./data:/app/data
 
@@ -67,7 +67,7 @@ services:
       - ssh_config:/config
       - ./data/incoming:/config/incoming
     ports:
-      - "2222:2222"
+      - "${FILE_DROP_PORT:-2222}:2222"
 
 volumes:
   db_data:

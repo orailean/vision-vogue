@@ -32,6 +32,50 @@ The taxonomy app is configured to call the models API via internal Docker DNS na
 
 Compose builds from these internal folders; no external repos needed.
 
+## Port Overrides
+
+All host-side ports are controlled by environment variables with sensible defaults. You can override them in three ways:
+
+**1. Edit `.env` (persistent, affects all runs):**
+
+A `.env.example` is committed with all defaults. Copy it to get started:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env`:
+
+```
+DB_PORT=5433
+MODELS_PORT=8001
+TAXONOMY_PORT=8081
+FILE_DROP_PORT=2223
+```
+
+**2. Inline on the CLI (one-off):**
+
+```bash
+DB_PORT=5433 MODELS_PORT=8001 docker compose up
+```
+
+**3. Export in your shell (session-scoped):**
+
+```bash
+export TAXONOMY_PORT=8081
+export FILE_DROP_PORT=2223
+docker compose up
+```
+
+| Variable | Default | Service |
+|---|---|---|
+| `DB_PORT` | `5432` | PostgreSQL |
+| `MODELS_PORT` | `8000` | FastAPI models API |
+| `TAXONOMY_PORT` | `8080` | Spring Boot taxonomy API & widget |
+| `FILE_DROP_PORT` | `2222` | SFTP file-drop |
+
+---
+
 ## Environment Overrides
 
 You can customize ports and service URLs using standard Spring Boot and Docker env overrides.

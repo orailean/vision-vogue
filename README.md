@@ -98,12 +98,12 @@ Common overrides:
 Use the baked-in SSH/SFTP service to drop files into the taxonomy watcher:
 
 ```bash
-scp -P 2222 my-image.jpg uploader@localhost:incoming/
+scp -P 2222 my-image.jpg uploader@localhost:incoming/<partner-id>/
 ```
 
 The command above maps directly to `data/incoming` inside the taxonomy container, so partner folders (for example `incoming/123/`) can be created locally or through the upload service.
 
-To change credentials, set `USER_NAME`, `USER_PASSWORD`, and related variables under the `file-drop` service in `docker-compose.yml`.
+To change credentials, set `FILE_DROP_USER` and `FILE_DROP_PASSWORD` in your `.env` file.
 
 ## Development Notes
 

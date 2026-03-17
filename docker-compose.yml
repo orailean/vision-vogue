@@ -59,8 +59,8 @@ services:
       PUID: 1000
       PGID: 1000
       TZ: UTC
-      USER_NAME: uploader
-      USER_PASSWORD: uploader
+      USER_NAME: ${FILE_DROP_USER:-uploader}
+      USER_PASSWORD: ${FILE_DROP_PASSWORD:-uploader}
       PASSWORD_ACCESS: "true"
       SUDO_ACCESS: "false"
     volumes:

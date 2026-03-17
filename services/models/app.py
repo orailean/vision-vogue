@@ -1,7 +1,8 @@
 # filename: app.py
+import logging
 from fastapi import FastAPI, File, UploadFile
 from transformers import (
-    AutoProcessor,
+    ViTImageProcessor,
     AutoModelForImageClassification,
     CLIPProcessor,
     CLIPModel
@@ -13,17 +14,29 @@ from typing import List, Dict
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger("app")
+
 app = FastAPI(title="Garment Classification & Fashion CLIP API")
 
 # --- Model 1: ViT clothes classification ---
+# jolual2747/vit-clothes-classification is a fine-tune of google/vit-base-patch16-224-in21k
+# but its repo has no preprocessor_config.json, so we load the processor from the base model.
 vit_model_name = "jolual2747/vit-clothes-classification"
-vit_processor = AutoProcessor.from_pretrained(vit_model_name)
+logger.info("Loading ViT processor from google/vit-base-patch16-224 ...")
+vit_processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224")
+logger.info("Loading ViT model %s ...", vit_model_name)
 vit_model = AutoModelForImageClassification.from_pretrained(vit_model_name)
+vit_model.eval()
+logger.info("ViT model loaded.")
 
 # Fashion CLIP used for attribute ranking
 clip_model_name = "patrickjohncyh/fashion-clip"
+logger.info("Loading Fashion-CLIP model %s ...", clip_model_name)
 clip_model = CLIPModel.from_pretrained(clip_model_name)
+clip_model.eval()
 clip_processor = CLIPProcessor.from_pretrained(clip_model_name)
+logger.info("Fashion-CLIP model loaded.")
 
 
 #############################################
@@ -183,20 +196,53 @@ ATTRIBUTE_SETS: Dict[str, List[str]] = {
 }
 
 
+def _get_image_features(image: Image.Image) -> torch.Tensor:
+    """Encode image once for reuse across CLIP attribute groups."""
+    inputs = clip_processor(images=image, return_tensors="pt")
+    with torch.no_grad():
+        vision_outputs = clip_model.vision_model(pixel_values=inputs["pixel_values"])
+        # Use pooler_output (CLS token projection) when available, else mean-pool
+        if vision_outputs.pooler_output is not None:
+            feats = clip_model.visual_projection(vision_outputs.pooler_output)
+        else:
+            feats = clip_model.visual_projection(vision_outputs.last_hidden_state[:, 0, :])
+    return feats / feats.norm(dim=-1, keepdim=True)
+
+
+def _clip_rank_with_features(image_features: torch.Tensor, candidates: List[str], prompt_template: str = "{}"):
+    """Rank candidates using pre-computed image features. Batches text in chunks of 64."""
+    BATCH = 64
+    scores = []
+    for i in range(0, len(candidates), BATCH):
+        batch_candidates = candidates[i:i + BATCH]
+        texts = [prompt_template.format(lbl) for lbl in batch_candidates]
+        inputs = clip_processor(text=texts, return_tensors="pt", padding=True, truncation=True)
+        with torch.no_grad():
+            text_outputs = clip_model.text_model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs["attention_mask"],
+            )
+            if text_outputs.pooler_output is not None:
+                text_features = clip_model.text_projection(text_outputs.pooler_output)
+            else:
+                text_features = clip_model.text_projection(text_outputs.last_hidden_state[:, 0, :])
+        text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        batch_scores = (image_features @ text_features.T).squeeze(0)
+        scores.extend(zip(batch_candidates, batch_scores.tolist()))
+
+    scores.sort(key=lambda x: x[1], reverse=True)
+    raw = torch.tensor([s for _, s in scores])
+    probs = raw.softmax(dim=0).tolist()
+    return [(label, prob) for (label, _), prob in zip(scores, probs)]
+
+
 def _clip_rank(image: Image.Image, candidates: List[str], prompt_template: str = "{}"):
     """Rank candidate labels for an image using CLIP zero-shot prompting.
 
     Returns list of (label, probability) sorted desc.
     """
-    texts = [prompt_template.format(lbl) for lbl in candidates]
-    inputs = clip_processor(text=texts, images=image, return_tensors="pt", padding=True)
-    with torch.no_grad():
-        outputs = clip_model(**inputs)
-        logits_per_image = outputs.logits_per_image
-        probs = logits_per_image.softmax(dim=1)
-    sorted_probs, indices = torch.sort(probs, descending=True)
-    ranked = [(candidates[idx], float(sorted_probs[0, i].item())) for i, idx in enumerate(indices[0])]
-    return ranked
+    image_features = _get_image_features(image)
+    return _clip_rank_with_features(image_features, candidates, prompt_template)
 
 
 def extract_dominant_colors(image: Image.Image, n_colors: int = 5):
@@ -223,7 +269,10 @@ def extract_dominant_colors(image: Image.Image, n_colors: int = 5):
 
 
 def analyze_attributes(image: Image.Image, top_per_group: int = 1):
-    """Analyze several attribute groups via CLIP zero-shot ranking."""
+    """Analyze several attribute groups via CLIP zero-shot ranking.
+
+    The image is encoded once; text candidates for each group are batched in chunks.
+    """
     templates = {
         "color": "a photo of a {} clothing item",
         "pattern": "{} pattern clothing",
@@ -245,10 +294,13 @@ def analyze_attributes(image: Image.Image, top_per_group: int = 1):
         "texture": "{} texture clothing",
     }
 
+    # Encode the image a single time and reuse across all attribute groups
+    image_features = _get_image_features(image)
+
     results: Dict[str, List[Dict[str, float]]] = {}
     for group, candidates in ATTRIBUTE_SETS.items():
         prompt = templates.get(group, "{}")
-        ranked = _clip_rank(image, candidates, prompt)
+        ranked = _clip_rank_with_features(image_features, candidates, prompt)
         topk = [
             {"label": lbl, "confidence": float(prob)}
             for lbl, prob in ranked[: max(1, top_per_group)]
@@ -267,10 +319,16 @@ async def analyze(
     """
     Comprehensive analysis: category, attribute predictions (via CLIP), and dominant colors.
     """
+    logger.info(
+        "Received /analyze request: file=%s, top_k_category=%d, top_per_attribute=%d, n_colors=%d",
+        file.filename, top_k_category, top_per_attribute, n_colors,
+    )
     image_data = await file.read()
     image = Image.open(io.BytesIO(image_data)).convert("RGB")
+    logger.info("Image loaded: size=%s, mode=%s", image.size, image.mode)
 
     # Category via ViT
+    logger.info("Classifying garment category...")
     inputs = vit_processor(images=image, return_tensors="pt")
     with torch.no_grad():
         outputs = vit_model(**inputs)
@@ -281,12 +339,17 @@ async def analyze(
             {"label": vit_model.config.id2label[idx.item()], "confidence": float(prob.item())}
             for prob, idx in zip(top_prob[0], top_idx[0])
         ]
+    logger.info("Categories predicted: %s", categories)
 
     # Attributes via CLIP
+    logger.info("Analyzing garment attributes...")
     attributes = analyze_attributes(image, top_per_group=int(max(1, top_per_attribute)))
+    logger.info("Attributes analyzed.")
 
     # Dominant colors via quantization
+    logger.info("Extracting dominant colors...")
     colors = extract_dominant_colors(image, n_colors=int(max(1, n_colors)))
+    logger.info("Colors extracted: %s", colors)
 
     return {
         "category": categories,
@@ -297,7 +360,14 @@ async def analyze(
 
 # --- Text embedding model (all-MiniLM-L6-v2) ---
 embed_model_name = "sentence-transformers/all-MiniLM-L6-v2"
+logger.info("Loading sentence-transformer %s ...", embed_model_name)
 embed_model = SentenceTransformer(embed_model_name)
+logger.info("All models loaded. API ready.")
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 
 class EmbedRequest(BaseModel):

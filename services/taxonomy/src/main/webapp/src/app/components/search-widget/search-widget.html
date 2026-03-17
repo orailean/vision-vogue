@@ -2,6 +2,11 @@
   <div class="search-header">
     <h2>Vision Vogue Search</h2>
     <p class="partner-info" *ngIf="partnerName">Partner: {{ partnerName }}</p>
+    <div class="mode-toggle">
+      <a [routerLink]="['/' + partnerId + '/visual']" class="mode-link">
+        <i class="pi pi-camera"></i> Switch to Visual Search
+      </a>
+    </div>
   </div>
 
   <div class="search-box">

@@ -29,8 +29,8 @@ public class WebConfig implements WebMvcConfigurer {
                         }
 
                         // For Angular routing - if resource doesn't exist and path looks like a route
-                        // (contains UUID pattern), return index.html
-                        if (resourcePath.matches("^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/?$")) {
+                        // (bare UUID or UUID + known sub-route), return index.html
+                        if (resourcePath.matches("^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(/visual)?/?$")) {
                             return new ClassPathResource("/static/widget/browser/index.html");
                         }
 

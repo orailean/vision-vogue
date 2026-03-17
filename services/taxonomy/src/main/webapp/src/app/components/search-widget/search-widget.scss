@@ -16,7 +16,29 @@
       color: #666;
       font-size: 0.9rem;
     }
-  }
+
+    .mode-toggle {
+      margin-top: 0.75rem;
+
+      .mode-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        color: #2196F3;
+        font-size: 0.9rem;
+        text-decoration: none;
+        padding: 0.35rem 0.85rem;
+        border: 1px solid #2196F3;
+        border-radius: 20px;
+        transition: background-color 0.2s, color 0.2s;
+
+        &:hover {
+          background-color: #2196F3;
+          color: white;
+        }
+      }
+    }
+  } // ← closes .search-header
 
   .search-box {
     margin-bottom: 2rem;
@@ -209,4 +231,3 @@
     }
   }
 }
-

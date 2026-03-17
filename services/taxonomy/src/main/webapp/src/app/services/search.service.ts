@@ -12,6 +12,11 @@ export interface SearchResult {
   text: string;
 }
 
+export interface VisualSearchResponse {
+  queryText: string;
+  results: SearchResult[];
+}
+
 @Injectable({
   providedIn: 'root'
 })
@@ -28,6 +33,18 @@ export class SearchService {
       .set('simWeight', simWeight.toString());
 
     return this.http.get<SearchResult[]>(`${this.baseUrl}/semantic`, { params });
+  }
+
+  visualSearch(partnerId: string, image: File, topK: number = 8, simWeight: number = 0.85): Observable<VisualSearchResponse> {
+    const formData = new FormData();
+    formData.append('image', image);
+
+    const params = new HttpParams()
+      .set('partnerId', partnerId)
+      .set('topK', topK.toString())
+      .set('simWeight', simWeight.toString());
+
+    return this.http.post<VisualSearchResponse>(`${this.baseUrl}/visual`, formData, { params });
   }
 }
 

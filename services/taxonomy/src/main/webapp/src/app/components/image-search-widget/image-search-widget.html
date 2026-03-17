@@ -1,0 +1,158 @@
+<div class="image-search-container">
+
+  <!-- Header -->
+  <div class="search-header">
+    <h2>
+      <i class="pi pi-camera"></i>
+      Visual Search
+    </h2>
+    <p class="partner-info" *ngIf="partnerName">Partner: {{ partnerName }}</p>
+    <p class="description">Upload a product image to find visually similar items in our catalog</p>
+    <div class="mode-toggle">
+      <a [routerLink]="['/' + partnerId]" class="mode-link">
+        <i class="pi pi-search"></i> Switch to Text Search
+      </a>
+    </div>
+  </div>
+
+  <!-- Upload area -->
+  <div class="upload-section">
+    <input
+      #fileInput
+      type="file"
+      accept="image/*"
+      class="hidden-input"
+      (change)="onFileSelected($event)"
+    />
+
+    <div
+      class="drop-zone"
+      [class.dragging]="isDragging"
+      [class.has-file]="selectedFile"
+      (dragover)="onDragOver($event)"
+      (dragleave)="onDragLeave()"
+      (drop)="onDrop($event)"
+      (click)="!selectedFile && openFilePicker()"
+    >
+      <!-- Empty state -->
+      <ng-container *ngIf="!selectedFile">
+        <i class="pi pi-upload drop-icon"></i>
+        <p class="drop-title">Drag &amp; drop an image here</p>
+        <p class="drop-subtitle">or <span class="link" (click)="openFilePicker()">browse files</span></p>
+        <p class="drop-hint">Supports JPEG, PNG, WebP, GIF</p>
+      </ng-container>
+
+      <!-- Preview state -->
+      <ng-container *ngIf="selectedFile">
+        <img [src]="previewUrl" alt="Selected image" class="preview-image" />
+        <div class="preview-overlay">
+          <button
+            pButton
+            type="button"
+            icon="pi pi-times"
+            class="p-button-rounded p-button-danger p-button-sm clear-btn"
+            (click)="$event.stopPropagation(); clearFile()"
+            title="Remove image"
+          ></button>
+        </div>
+        <p class="file-name">{{ selectedFile.name }}</p>
+      </ng-container>
+    </div>
+
+    <div class="search-actions">
+      <button
+        pButton
+        type="button"
+        label="Find Similar Products"
+        icon="pi pi-search"
+        class="p-button-lg search-btn"
+        (click)="onSearch()"
+        [disabled]="!selectedFile || loading"
+      ></button>
+    </div>
+  </div>
+
+  <!-- Results area -->
+  <div class="results-section"
+       *ngIf="loading || results.length > 0 || error || (searchPerformed && !loading && results.length === 0)">
+
+    <!-- Spinner -->
+    <div class="spinner-container" *ngIf="loading">
+      <p-progressSpinner></p-progressSpinner>
+      <p>Analysing image and searching catalog…</p>
+    </div>
+
+    <!-- Error -->
+    <div class="error-message" *ngIf="error">
+      <i class="pi pi-exclamation-triangle"></i>
+      {{ error }}
+    </div>
+
+    <!-- Results -->
+    <div class="results-container" *ngIf="!loading && results.length > 0">
+      <div class="results-header">
+        <h3>{{ results.length }} Similar Product(s) Found</h3>
+        <div class="query-pill" *ngIf="queryText">
+          <i class="pi pi-tag"></i>
+          <span class="query-label">Detected attributes:</span>
+          <span class="query-text">{{ queryText }}</span>
+        </div>
+      </div>
+
+      <p-carousel
+        [value]="results"
+        [numVisible]="3"
+        [numScroll]="1"
+        [circular]="true"
+        [responsiveOptions]="responsiveOptions"
+        [autoplayInterval]="0"
+      >
+        <ng-template let-result pTemplate="item">
+          <div class="result-item">
+            <p-card>
+              <ng-template pTemplate="header">
+                <img
+                  *ngIf="!result.imageError"
+                  [src]="getImageUrl(result.filename)"
+                  [alt]="result.filename"
+                  class="result-image"
+                  (error)="handleImageError(result)"
+                />
+                <div *ngIf="result.imageError" class="image-error">
+                  <i class="pi pi-image"></i>
+                  <p>Image not available</p>
+                </div>
+              </ng-template>
+              <ng-template pTemplate="title">{{ result.topCategoryLabel }}</ng-template>
+              <ng-template pTemplate="subtitle">{{ result.filename }}</ng-template>
+              <ng-template pTemplate="content">
+                <div class="scores">
+                  <div class="score-item">
+                    <span class="score-label">Similarity</span>
+                    <span class="score-value">{{ (result.similarity * 100).toFixed(1) }}%</span>
+                  </div>
+                  <div class="score-item">
+                    <span class="score-label">Confidence</span>
+                    <span class="score-value">{{ (result.topCategoryConfidence * 100).toFixed(1) }}%</span>
+                  </div>
+                  <div class="score-item highlight">
+                    <span class="score-label">Combined Score</span>
+                    <span class="score-value">{{ (result.combinedScore * 100).toFixed(1) }}%</span>
+                  </div>
+                </div>
+              </ng-template>
+            </p-card>
+          </div>
+        </ng-template>
+      </p-carousel>
+    </div>
+
+    <!-- No results -->
+    <div class="no-results" *ngIf="!loading && results.length === 0 && searchPerformed && !error">
+      <i class="pi pi-info-circle"></i>
+      <p>No similar products were found. Try uploading a different image.</p>
+    </div>
+  </div>
+
+</div>
+

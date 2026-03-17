@@ -10,9 +10,12 @@ import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
@@ -20,6 +23,9 @@ import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
 @Component
 public class DirectoryWatcherService {
     private static final Logger log = LoggerFactory.getLogger(DirectoryWatcherService.class);
+
+    // How often (seconds) the polling fallback scans for new files missed by inotify
+    private static final long POLL_INTERVAL_SECONDS = 10;
 
     private final AppProperties props;
     private final FileProcessingService processingService;
@@ -36,6 +42,15 @@ public class DirectoryWatcherService {
         t.setDaemon(true);
         return t;
     });
+    // Scheduler for polling fallback (handles cp / bind-mount cases where inotify events are missed)
+    private final ScheduledExecutorService pollScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "income-poller");
+        t.setDaemon(true);
+        return t;
+    });
+    // Track files already submitted to avoid double-processing between inotify and polling
+    private final Set<Path> submittedFiles = ConcurrentHashMap.newKeySet();
+
     private final AtomicBoolean running = new AtomicBoolean(false);
     private WatchService watchService;
     private final Map<WatchKey, Path> keyDirMap = new ConcurrentHashMap<>();
@@ -69,10 +84,7 @@ public class DirectoryWatcherService {
                             log.info("Ignoring {}: no matching partner in DB", p.toAbsolutePath());
                             continue;
                         }
-                        processingExecutor.submit(() -> {
-                            try { processingService.processSingleFile(p); }
-                            catch (Exception ex) { log.error("Failed processing {}: {}", p.getFileName(), ex.getMessage()); }
-                        });
+                        submitFile(p);
                     }
                 }
                 // Also scan first-level subdirectories for existing files
@@ -84,10 +96,7 @@ public class DirectoryWatcherService {
                                     log.info("Ignoring {}: no matching partner in DB", f.toAbsolutePath());
                                     continue;
                                 }
-                                processingExecutor.submit(() -> {
-                                    try { processingService.processSingleFile(f); }
-                                    catch (Exception ex) { log.error("Failed processing {}: {}", f.getFileName(), ex.getMessage()); }
-                                });
+                                submitFile(f);
                             }
                         }
                     }
@@ -99,7 +108,13 @@ public class DirectoryWatcherService {
 
         // Start watch loop
         watcherExecutor.submit(this::watchLoop);
-        log.info("Started directory watcher on {}", income.toAbsolutePath());
+
+        // Polling fallback: catches files dropped via cp/bind-mount where inotify events are missed
+        pollScheduler.scheduleWithFixedDelay(this::pollIncomeDirectory,
+                POLL_INTERVAL_SECONDS, POLL_INTERVAL_SECONDS, TimeUnit.SECONDS);
+
+        log.info("Started directory watcher on {} (polling every {}s as fallback)",
+                income.toAbsolutePath(), POLL_INTERVAL_SECONDS);
     }
 
     private void watchLoop() {
@@ -133,13 +148,7 @@ public class DirectoryWatcherService {
                     continue;
                 }
                 log.info("Detected new file: {}", fullPath.toAbsolutePath());
-                processingExecutor.submit(() -> {
-                    try {
-                        processingService.processSingleFile(fullPath);
-                    } catch (Exception ex) {
-                        log.error("Failed processing {}: {}", fullPath.getFileName(), ex.getMessage());
-                    }
-                });
+                submitFile(fullPath);
             }
             boolean valid = key.reset();
             if (!valid) {
@@ -155,6 +164,61 @@ public class DirectoryWatcherService {
         log.info("Watching directory: {}", dir.toAbsolutePath());
     }
 
+    /**
+     * Submit a file for processing only if it hasn't been submitted already.
+     * The entry is removed from the set once processing completes (success or failure),
+     * so a file that reappears after being moved away will be picked up again.
+     */
+    private void submitFile(Path file) {
+        Path normalized = file.toAbsolutePath().normalize();
+        if (!submittedFiles.add(normalized)) {
+            return; // already in-flight
+        }
+        processingExecutor.submit(() -> {
+            try {
+                processingService.processSingleFile(file);
+            } catch (Exception ex) {
+                log.error("Failed processing {}: {}", file.getFileName(), ex.getMessage());
+            } finally {
+                submittedFiles.remove(normalized);
+            }
+        });
+    }
+
+    /**
+     * Polling fallback: scans the income directory for files that are present but were
+     * never picked up by inotify (e.g. files dropped via {@code cp} through a Docker
+     * bind-mount on macOS where the host kernel events are not forwarded to the container).
+     */
+    private void pollIncomeDirectory() {
+        try {
+            Path income = Paths.get(props.getIncomeDir());
+            try (DirectoryStream<Path> dirs = Files.newDirectoryStream(income, Files::isDirectory)) {
+                for (Path dir : dirs) {
+                    try (DirectoryStream<Path> files = Files.newDirectoryStream(dir,
+                            p -> !Files.isDirectory(p) && processingService.isSupportedImage(p))) {
+                        for (Path f : files) {
+                            if (!processingService.isKnownPartnerFile(f)) continue;
+                            submitFile(f);
+                        }
+                    } catch (IOException ex) {
+                        log.warn("Poll scan error in {}: {}", dir, ex.getMessage());
+                    }
+                }
+            }
+            // also top-level files
+            try (DirectoryStream<Path> files = Files.newDirectoryStream(income,
+                    p -> !Files.isDirectory(p) && processingService.isSupportedImage(p))) {
+                for (Path f : files) {
+                    if (!processingService.isKnownPartnerFile(f)) continue;
+                    submitFile(f);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Polling scan failed: {}", e.getMessage());
+        }
+    }
+
     @PreDestroy
     public void stop() {
         running.set(false);
@@ -163,5 +227,6 @@ public class DirectoryWatcherService {
         } catch (IOException ignored) {}
         watcherExecutor.shutdownNow();
         processingExecutor.shutdown();
+        pollScheduler.shutdownNow();
     }
 }

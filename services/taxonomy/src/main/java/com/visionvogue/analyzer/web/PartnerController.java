@@ -40,5 +40,11 @@ public class PartnerController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable("id") UUID id) {
+        boolean deleted = partnerService.deletePartner(id);
+        return deleted ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
+    }
+
     public record CreatePartnerRequest(@NotBlank String name) {}
 }
